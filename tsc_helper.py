@@ -31,6 +31,17 @@ def read_data(uploaded_files= False):
             key = pd.read_pickle('C:\\Users\\pwsan\\Box Sync\\My Files\\Big Data\\Output Files\\Tsc Key cleaned')
         return [data,key]
 
+def vc_plus(data, column, format_percent = True):
+    """Gets counts and percents from value_counts, for some reason streamlit deploy isn't liking sidetable so wanted to try w/o"""
+    raw = data[column].value_counts(dropna=False).rename('Count')
+    percent = data[column].value_counts(normalize=True, dropna=False).rename('Percent').round(2)
+    percent = (percent * 100).round(2)
+    if format_percent == True:
+        percent = percent.astype('str')
+        percent = percent + '%'
+    merged = pd.concat([raw,percent], axis=1).reset_index().rename({'index':column}, axis=1)
+    return merged
+
 def tsc_means(data, key):
     totalMeans = data.mean().reset_index()
     totalMeans.rename({'index': 'VariableId', 0: 'Value'}, inplace = True, axis = 1)
@@ -81,16 +92,20 @@ def grouped_pivot_table(data, key_df, groupby, max_ranking =3, include_percents 
 def top_values(pivoted_data, tables):
     t1, t2, t3 = st.beta_columns((1,1,1))
     
-    firstTable = pivoted_data.stb.freq([1])[[1, 'count', 'percent']].rename({1:'Choice'}, axis = 1)
-    secondTable = pivoted_data.stb.freq([2])[[2, 'count', 'percent']].rename({2:'Choice'}, axis=1)
-    thirdTable = pivoted_data.stb.freq([3])[[3, 'count', 'percent']].rename({3:'Choice'}, axis=1)
+    firstTable = vc_plus(pivoted_data, 1)[[1, 'Count', 'Percent']].rename({1:'Choice'}, axis = 1)
+    secondTable = vc_plus(pivoted_data, 2)[[2, 'Count', 'Percent']].rename({2:'Choice'}, axis = 1)
+    thirdTable = vc_plus(pivoted_data, 3)[[3, 'Count', 'Percent']].rename({3:'Choice'}, axis = 1)
+
+    #firstTable = pivoted_data.stb.freq([1])[[1, 'count', 'percent']].rename({1:'Choice'}, axis = 1)
+    #secondTable = pivoted_data.stb.freq([2])[[2, 'count', 'percent']].rename({2:'Choice'}, axis=1)
+    #thirdTable = pivoted_data.stb.freq([3])[[3, 'count', 'percent']].rename({3:'Choice'}, axis=1)
 
     charts = []
     for i in [firstTable, secondTable, thirdTable]:
 
         
         chart = alt.Chart(i, height=300, width=500).mark_bar().encode(
-            x= 'count',
+            x= 'Count',
             y= alt.Y('Choice', sort='-x')
         ).configure_axis(
             labelFontSize = 11
@@ -123,18 +138,22 @@ def site_characteristics(data):
     c1,c2 = st.beta_columns((1,1))
     
     t1.write('Responses by Researcher')
-    c1.write(data.stb.freq(['ResearcherName']).drop('cumulative_count', axis=1))    
+    c1.write(vc_plus(data, 'ResearcherName'))
+   
     t2.write('Responses by Site')
-    c2.write(data.stb.freq(['LocationName']).drop('cumulative_count', axis=1))
-    st.text('')
+    c2.write(vc_plus(data, 'LocationName'))
+  
     r2t1, r2t2, r2t3 = st.beta_columns((1,1,1))
     r2c1, r2c2,r2c3 = st.beta_columns((1,1,1))
+
     r2t1.write('Responses by Language')
-    r2c1.write(data.stb.freq(['LanguageName']).drop('cumulative_count', axis=1))
+    r2c1.write(vc_plus(data,'LanguageName'))
+
     r2t2.write('Responses by Location Type')
-    r2c2.write(data.stb.freq(['LocationType']).drop('cumulative_count', axis=1))
+    r2c2.write(vc_plus(data,'LocationType'))
+
     r2t3.write('Responses by Country')
-    r2c3.write(data.stb.freq(['CountryName']).drop('cumulative_count', axis=1))
+    r2c3.write(vc_plus(data, 'CountryName'))
 
 def client_characteristics(data):
     st.header('Client Characteristics')
@@ -142,12 +161,12 @@ def client_characteristics(data):
 
     with col1:
         st.write('Ethnicity')
-        st.write(data.stb.freq(['EthnicityCategorized']).drop('cumulative_count', axis=1))
+        st.write(vc_plus(data, 'EthnicityCategorized'))
     
     with col2:
         st.write('Gender')
         data['Gender'] = data.Gender.str.title()
-        st.write(data.stb.freq(['Gender']).drop('cumulative_count', axis=1))
+        st.write(vc_plus(data, 'Gender'))
         
     with col3:
         st.write('Age')
@@ -160,42 +179,43 @@ def client_characteristics(data):
     r2c1, r2c2, r2c3 = st.beta_columns(3)
     with r2c1:
         st.write('Religious Tradition')
-        st.write(data.stb.freq(['ReligiousAffiliation']).drop('cumulative_count', axis=1))
+        st.write(vc_plus(data, 'ReligiousAffiliation'))
 
     with r2c2:
         st.write('Denomination')
-        st.write(data.stb.freq(['DenominationCategorized']).drop('cumulative_count', axis=1))
+        st.write(vc_plus(data, 'DenominationCategorized'))
     
     with r2c3:
         st.write('Is Religion Important?')
-        st.write(data.stb.freq(['IsReligionImportant']).drop('cumulative_count', axis=1))
+        st.write(vc_plus(data, 'IsReligionImportant'))
     
     st.text('')
-    r3c1, r3c2,r3c3 = st.beta_columns(3)
+
+    r3c1, r3c2, r3c3 = st.beta_columns(3)
     with r3c1:
         st.write('Willing to Discuss Religion')
-        st.write(data.stb.freq(['DiscussReligion']).drop('cumulative_count', axis=1))
+        st.write(vc_plus(data, 'DiscussReligion'))
     
     with r3c2:
         st.write('Has religion hurt you?')
-        st.write(data.stb.freq(['HasReligionHurt']).drop('cumulative_count', axis=1))
+        st.write(vc_plus(data, 'HasReligionHurt'))
     
     with r3c3:
         st.write('Willing to try religious suggestions')
-        st.write(data.stb.freq(['TryReligiousSuggestions']).drop('cumulative_count', axis=1))
+        st.write(vc_plus(data, 'TryReligiousSuggestions'))
 
 def treatment_characteristics(data):
     st.header('Treatment Characteristics')
     c1,c2,c3 = st.beta_columns(3)
     with c1:
         st.write('Treatment Modality')
-        st.write(data.stb.freq(['Modality']).drop('cumulative_count', axis=1))
+        st.write(vc_plus(data, 'Modality'))
     with c2:
         st.write('Responses by session number')
-        st.write(data.stb.freq(['SessionCount']).drop('cumulative_count', axis=1))
+        st.write(vc_plus(data, 'SessionCount'))
     with c3:
         st.write('Max Sessions by response')
-        st.write(data.stb.freq(['SessionMax']).drop('cumulative_count', axis=1))
+        st.write(vc_plus(data, 'SessionMax'))
 
 def missing_data_characteristics(data):
     st.header('Missing Data')
@@ -203,27 +223,27 @@ def missing_data_characteristics(data):
 
     with c1:
         st.write('Total number of empty TSC sections')
-        st.write(data.stb.freq(['sumEmptySections']).drop('cumulative_count', axis=1))
+        st.write(vc_plus(data, 'sumEmptySections'))
     with c2:
         st.write('Number of intentions selected')
-        st.write(data.stb.freq(['IntentionsNotNa']).drop('cumulative_count', axis=1).sort_values('IntentionsNotNa'))
+        st.write(vc_plus(data, 'IntentionsNotNa'))
     with c3:
         st.write('Number of Theoretical Orientations Selected')
-        st.write(data.stb.freq(['TheoreticalOrientationNotNa']).drop('cumulative_count', axis=1).sort_values('TheoreticalOrientationNotNa'))
+        st.write(vc_plus(data, 'TheoreticalOrientationNotNa'))
 
     r2c1,r2c2,r2c3 = st.beta_columns(3)
 
     with r2c1:
         st.write('Number of Spiritual Interventions Selected')
-        st.write(data.stb.freq(['SpiritualInterventionsNotNa']).drop('cumulative_count', axis=1).sort_values('SpiritualInterventionsNotNa'))
+        st.write(vc_plus(data, 'SpiritualInterventionsNotNa'))
 
     with r2c2:
         st.write('Number of Interventions Selected')
-        st.write(data.stb.freq(['InterventionsNotNa']).drop('cumulative_count', axis=1).sort_values('InterventionsNotNa'))
+        st.write(vc_plus(data, 'InterventionsNotNa'))
     
     with r2c3:
         st.write('Number of Counseling Topics Selected')
-        st.write(data.stb.freq(['InterventionsNotNa']).drop('cumulative_count', axis=1).sort_values('InterventionsNotNa'))
+        st.write(vc_plus(data, 'CounselingTopicsNotNa'))
 
 def get_eigenvalues(item_data, items):
         fa= FactorAnalyzer(len(items), rotation=None)

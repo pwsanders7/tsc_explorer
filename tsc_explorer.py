@@ -16,8 +16,6 @@ navigation = st.sidebar.selectbox(label='Navigation',options=['Introduction','Sa
 if isinstance(data, str):
     st.write('Please upload data files in the file selector above')
 
-
-
 else:
 
     items = list(data.loc[:, 'TheoreticalOrientation.1':'Interventions.3120'])
@@ -50,6 +48,7 @@ else:
 
 
         #Filtering data
+        st.write(th.vc_plus(data,'TheoreticalOrientation.2'))
 
         dataFiltered = th.filter_researcher(data =data, researcher= selectedResearcher, showAll = showAllResearchers, sections = selectedSection)
         dataFiltered = th.filter_section(dataFiltered, selectedSection, grouping_variable=groupingVariable)
@@ -63,6 +62,7 @@ else:
 
         itemsFiltered = [i for i in dataFiltered.columns]
 
+        
 
         #st.write(meansFiltered)
         
