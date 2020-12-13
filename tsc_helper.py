@@ -1,5 +1,5 @@
 import pandas as pd 
-import sidetable as stb 
+#import sidetable as stb 
 import streamlit as st
 import subprocess
 import altair as alt

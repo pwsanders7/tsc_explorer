@@ -1,6 +1,6 @@
 import pandas as pd 
 import streamlit as st
-import sidetable as stb 
+#import sidetable as stb 
 #from pandas_profiling import ProfileReport
 #from streamlit_pandas_profiling import st_profile_report
 import tsc_helper as th
