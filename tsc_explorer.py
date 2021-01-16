@@ -1,3 +1,4 @@
+
 import pandas as pd 
 import streamlit as st
 #import sidetable as stb 
@@ -11,7 +12,11 @@ from factor_analyzer import FactorAnalyzer
 
 st.set_page_config(layout='wide')
 data, key = th.read_data(uploaded_files=True)
-navigation = st.sidebar.selectbox(label='Navigation',options=['Introduction','Sample Information', 'Group Rankings', 'EFA', 'Columns and Key', 'Longitudinal', 'Correlations', 'Key'], index=1)
+#data, key = th.read_data(uploaded_files=True)
+navigation = st.sidebar.selectbox(label='Navigation',options=['Introduction','Sample Information', 'Group Rankings', 'EFA', 'Clustering','Columns and Key', 'Longitudinal', 'Correlations', 'Key'], index=0)
+
+
+#data.loc[data.ResearcherName == 'CCC Researcher', :]
 
 if isinstance(data, str):
     st.write('Please upload data files in the file selector above')
@@ -39,10 +44,10 @@ else:
             label= 'TSC Section',
             options = [ 'Theoretical Orientation', 'Interventions', 'Spiritual Interventions', 'Counseling Topics', 'Intentions']
         )
-
-        groupingVariable = st.sidebar.selectbox(label='Grouping Variable',
-        options=['ResearcherName', 'LocationName','LocationType', 'Modality',
+        groupingList = ['ResearcherName', 'LocationName','LocationType', 'Modality',
         'SessionCount', 'EthnicityCategorized', 'ReligiousAffiliation', 'IsReligionImportant', 'TherapistJoined', 'ClientName']
+        groupingVariable = st.sidebar.selectbox(label='Grouping Variable',
+        options= groupingList
         )
 
 
@@ -144,36 +149,91 @@ else:
         c2.table(key[['VariableId', 'ItemText']])
 
     elif navigation == 'EFA':
+        #Creating interactive widgets
 
+        data = th.researcher_select(data, researcherList)
+        #st.write(data.ResearcherName.value_counts())
+       
         selectedSection = st.sidebar.selectbox(
-            label= 'TSC Section',
+            label= 'TSC Section for FA',
             options = [ 'Theoretical Orientation', 'Interventions', 'Spiritual Interventions', 'Counseling Topics', 'Intentions']
             )
         selectedSection = selectedSection.replace(' ', '')
-        
-        items = [i for i in data.columns if selectedSection in i]
-        itemsClient = items.append('ClientName')
-        itemData = data[items]
-        groupedItemData = itemData.groupby('ClientName')[items].mean()
-        st.write(groupedItemData.head())
-        
-        #Doing initial model tets
-        th.efa_model_tests(groupedItemData)
 
-        #Determining number of factors
-        st.header('Factor Selection')
-        runScree = st.button('Create Screeplot')
-        #  if runScree:
-        th.scree_plot(groupedItemData, items)
-        
-        #Reading output
-        st.header('EFA Model')
-        nFactors = int(st.number_input('Number of Factors'))
-        runEfa = st.button('Run Analysis')
-        if runEfa:
-            efa = FactorAnalyzer(nFactors)
-            efa.fit(groupedItemData)
-            st.write(efa.loadings_.transpose())
+        groupToggle = st.sidebar.checkbox('Group values by client', value=True) 
+        groupingList = ['ResearcherName', 'LocationName','LocationType', 'Modality',
+        'SessionCount', 'EthnicityCategorized', 'ReligiousAffiliation', 'IsReligionImportant', 'TherapistJoined', 'ClientName']
+        efaGrouping = st.sidebar.selectbox('Grouping for percentage charts', groupingList)
+
+        if data.empty:
+            st.write('Please select a researcher to include, or select all researchers using the toggle on the left')
+        else:
+            items = [i for i in data.columns if (selectedSection in i) & ('NotNa' not in i)]
+                    
+            if groupToggle == True:
+                itemsClient = items + ['ClientName']
+                itemData = data[itemsClient]
+                itemData = itemData.groupby('ClientName')[items].mean()
+            else:
+                itemData = data[items]
+
+            itemData.head()
+            #Doing initial model tets
+            #th.efa_model_tests(itemData)
+            st.write(itemData.shape)
+            #Determining number of factors
+            st.header('Factor Selection')
+            
+            runScree = st.button('Create Screeplot')
+            th.scree_plot(itemData, items)
+  
+
+            #Reading output
+            st.header('EFA Model')
+            c1, c2, c3 = st.beta_columns(3)
+            nFactors = int(c1.number_input('Number of Factors', value=0, step=1))
+            onlyShowHighest = c3.checkbox('Only show loadings for highest factor', value=True)
+            loadingCutoff = c2.number_input('Minimum factor loading', value=.40)
+            #runEfa = st.button('Run Analysis')
+            if nFactors != 0:
+                efa = FactorAnalyzer(nFactors)
+                efa.fit(itemData)
+                loadings = th.rename_loadings(efa.loadings_, key, itemData)
+                st.header('Output')
+                #export1, export2 = st.beta_columns(2)
+                
+                
+                allTables = th.separate_factor_output(loadings, onlyShowHighest, loadingCutoff)
+                loadingExpander = st.beta_expander('Model Information',expanded=True)
+                dataScored = th.score_factors(data, allTables, key)
+                factorCols = [i for i in dataScored.columns if 'Mean' in i]
+                #st.write(dataScored.groupby('ResearcherName')[factorCols].mean().reset_index())
+                chartList = th.create_factor_charts(dataScored, efaGrouping, 2)
+                
+                with loadingExpander:
+                    th.fa_display(allTables, chartList, nFactors, columns = 2)
+                export_expander = st.beta_expander('Export')
+
+                st.header('Factor Correlations')
+                st.write(dataScored[factorCols].corr())
+                st.write(itemData.columns)
+
+                with export_expander:
+                    exportFileName = st.text_input('Export File Name (Will export when you press enter)')
+                    exportToggle = st.button('Export')
+                if exportToggle:
+                    th.export_loadings(allTables, exportFileName)
+                
+                
+
+
+                
+            else:
+                pass
+    
+    if navigation == 'Clustering':
+        st.header('Clustering')
+
 
     else:
         pass

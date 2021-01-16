@@ -1,5 +1,7 @@
+from json import load
 import pandas as pd 
 #import sidetable as stb 
+import numpy as np
 import streamlit as st
 import subprocess
 import altair as alt
@@ -31,7 +33,7 @@ def read_data(uploaded_files= False):
             key = pd.read_pickle('C:\\Users\\pwsan\\Box Sync\\My Files\\Big Data\\Output Files\\Tsc Key cleaned')
         return [data,key]
 
-def vc_plus(data, column, format_percent = True):
+def vc_plus(data, column, format_percent = True, replace_missing = True):
     """Gets counts and percents from value_counts, for some reason streamlit deploy isn't liking sidetable so wanted to try w/o"""
     raw = data[column].value_counts(dropna=False).rename('Count')
     percent = data[column].value_counts(normalize=True, dropna=False).rename('Percent').round(2)
@@ -40,6 +42,8 @@ def vc_plus(data, column, format_percent = True):
         percent = percent.astype('str')
         percent = percent + '%'
     merged = pd.concat([raw,percent], axis=1).reset_index().rename({'index':column}, axis=1)
+    if replace_missing == True:
+        merged = merged.fillna('*Missing*')
     return merged
 
 def tsc_means(data, key):
@@ -255,6 +259,7 @@ def scree_plot(item_data, items):
     eig1, eig2 = st.beta_columns(2)
     ev = pd.Series(ev)
     ev = ev.reset_index().rename({'index': 'Factors', 0:'Eigenvalues'}, axis = 1)
+    ev['Factors'] = ev['Factors'] + 1
     with eig1:
         scree = alt.Chart(ev).mark_line(point=True).encode(
             x= 'Factors',
@@ -268,8 +273,9 @@ def scree_plot(item_data, items):
         st.write(ev)
 
 def efa_model_tests(item_data):
+    st.header('Model Tests')
     col1,col2= st.beta_columns(2)
-    st.write('Testing the viability of the model')
+    
     with col1:
         st.write('Bartlett Sphericity')
         #runSphericity = st.button('Run Analysis')
@@ -283,7 +289,153 @@ def efa_model_tests(item_data):
         kmoAll, kmoModel = calculate_kmo(item_data)
         st.write(f'KMO Statistic: {kmoModel}')
 
+def rename_loadings(loading_data, key, item_data):
+    #Creating maps for the renames
+    keyNoSpace = key
+    keyNoSpace['VariableId'] = keyNoSpace['VariableId'].str.replace(' ', '')
+    variableItemMap = keyNoSpace.set_index('VariableId')['ItemText'].to_dict()
+    positionColDict = {v: k for v, k in enumerate(list(item_data.columns))}
+    
+    #Changing the index so it is a more interpretable name, second step turns it into the choice
+    loadings = pd.DataFrame(loading_data)
+    loadings = loadings.rename(positionColDict)
+    loadings = loadings.rename(variableItemMap)
+    return loadings
+
+def researcher_select(data, researcher_list):
+    
+    #Select whether they want all researchers
+    showAllResearchers = st.sidebar.checkbox('Show data for all researchers (may take some time to load)', value= True )
+
+    #If they want all researchers, show an exclusion list and have data start out with all included (get unique researchers)
+    if showAllResearchers:
+        excludedResearcher = st.sidebar.multiselect('Researchers to exclude', researcher_list) 
+        dataFiltered = data.loc[~data['ResearcherName'].isin(excludedResearcher)]
+    else:
+        includedResearcher = st.sidebar.multiselect('Researchers to include', researcher_list)
+        dataFiltered = data.loc[data['ResearcherName'].isin(includedResearcher)]
+    
+    return dataFiltered
+
+def separate_factor_output(loading_data, only_show_highest, min_loading):
+
+    #create a column using id max that shows which factor each item loads into most highly
+    nItems = loading_data.shape[1]
+    loading_data['HighestFactor'] = loading_data.idxmax(axis=1)
+    #create a loop that goes through and Iterates on a range of 0 to max number of choices
+    allTables = []
+    for item in range(0,nItems):
+        #Selects all choices that have idmax equal to current value of loop
+        hiFactorTable = loading_data.loc[(loading_data.HighestFactor == item) & (loading_data[item] >= min_loading)]
+        hiFactorTable = hiFactorTable.sort_values(item, ascending=False)
         
+
+        if only_show_highest == True:
+            hiFactorTable = hiFactorTable[item]
+        
+        hiFactorTable = hiFactorTable.rename('loading')
+        
+        #st.write(f'Factor {item} highest')
+        #st.write(hiFactorTable)
+    
+        headerRow = pd.Series({f'Factor {item}': np.nan})
+        hiFactorTable = pd.concat([headerRow, pd.Series(hiFactorTable)])
+        allTables.append(hiFactorTable)
+
+    #fullTable = pd.concat(allTables).rename('Highest Loading')
+    return allTables
+
+def export_loadings(all_tables, export_filename):
+    fullTable = pd.concat(all_tables).rename('Highest Loading')
+    fullTable.to_csv(f'C:\\Users\\pwsan\\Box Sync\\My Files\\Big Data\\Output Files\\{export_filename}.csv')
+
+def score_factors(data, loading_tables, key):
+    count = 0
+    #fullTable = pd.concat(loading_tables).rename('Highest Loading')
+
+    for factor in loading_tables:
+        itemVariablemMap = key.set_index('ItemText')['VariableId'].to_dict()
+        factor = factor.rename(itemVariablemMap)
+        items = [i for i in factor.index if 'Factor' not in i]
+
+        data[f'factor{count}Mean'] = data[items].mean(axis = 1)
+        count +=1
+    return data
+
+def create_factor_charts(data, grouping_var, n_columns):
+    #Create a list of the factor variables
+    factorItems = [i for i in data.columns if "factor" in i]
+    #factorItemsAppend = factorItems + grouping_var
+    #Do the groupby with all factor variables, reset index
+    groupedData = data.groupby(grouping_var)[factorItems].mean().reset_index()
+    #Create column counter variable
+    columnCount = 0
+    factorCount = 0
+    #Create streamlit columns
+    #chartCols = st.beta_columns(n_columns)
+    #Used to create a list of charts to be formatted afterwards
+    chartList = []
+    #Loop through the factorItems and create chart
+    for item in factorItems:
+        #Select factor and grouping_var and create as df
+        chartData = groupedData[[grouping_var, item]]
+        #Create bar chart with grouping var as the y axis and score on the specific factor on x
+        chart = alt.Chart(chartData,).mark_bar().encode(
+            x = alt.X(item, scale= alt.Scale(domain=(0,1))),
+            y= alt.Y(grouping_var, sort='-x')
+        )
+        #chartCols[columnCount].write(f'Factor {factorCount}')
+        #chartCols[columnCount].write(chart)
+        factorCount += 1
+        if columnCount < (n_columns - 1) :
+            columnCount += 1
+        else:
+            columnCount = 0
+        chartList.append(chart)
+    return chartList
+        
+    
+        #Write it to the column corresponding to the column counter number
+        #If columns is less than n_columns increase it by one, if it is equal to it, then set back to one
+
+def fa_display(loading_tables, group_charts, n_factors, columns):
+
+    #Set up the columns
+    cols= st.beta_columns(columns)
+    #col1.write('Factor Information')
+    #col2.write('Group Information')
+    #Create a for loop with range from 0 to n_factors -1
+    column = 0
+    for item in range(0, n_factors):
+        noFactor = [i for i in loading_tables[item].index if not "Factor" in i]
+        #write c1 to be loading_tables[item]
+        cols[column].header(f'Factor {item}')
+        #col[item].write(f'Factor {item}')
+        cols[column].write('Model Loadings')
+        cols[column].write(loading_tables[item][noFactor])
+
+        #col2.write(f'Factor {item}')
+        cols[column].write('Grouped Values')
+        cols[column].write(group_charts[item])
+        #write c2 to be group_charts[item]
+        if column < columns -1:
+            column +=1
+        else:
+            column = 0
+
+   
+
+    
+
+
+
+
+
+    
+        
+        
+
+
         
     
 
