@@ -2,12 +2,15 @@ from json import load
 import pandas as pd 
 #import sidetable as stb 
 import numpy as np
+from pandas.core.reshape.concat import concat
 import streamlit as st
 import subprocess
 import altair as alt
 from factor_analyzer import FactorAnalyzer
 from factor_analyzer.factor_analyzer import FactorAnalyzer, calculate_bartlett_sphericity, calculate_kmo
 from factor_analyzer import FactorAnalyzer
+import docx
+
 
 def read_data(uploaded_files= False):
     if uploaded_files == True:
@@ -46,14 +49,69 @@ def vc_plus(data, column, format_percent = True, replace_missing = True):
         merged = merged.fillna('*Missing*')
     return merged
 
-def tsc_means(data, key):
-    totalMeans = data.mean().reset_index()
-    totalMeans.rename({'index': 'VariableId', 0: 'Value'}, inplace = True, axis = 1)
-    totalMeans = totalMeans.merge(key, on = 'VariableId' )
-    totalMeans = totalMeans.sort_values('Value', ascending = False )
-    totalMeans['Value'] = totalMeans['Value'].round(2)
-    return totalMeans[['VariableId', 'ItemText', 'Value']]
 
+def tsc_aggregate(data, key, agg_method = 'mean', value_colname = 'Value', exclude_interventions = False ):
+    if exclude_interventions:
+        noIntCols = [i for i in data.columns if not i.startswith('Interventions')]
+        data = data[noIntCols]
+    aggTotal = data.aggregate(agg_method).reset_index()
+    #aggTotal = data.mean().reset_index()
+    aggTotal.rename({'index': 'VariableId', 0: value_colname}, inplace = True, axis = 1)
+    aggTotal = aggTotal.merge(key, on = 'VariableId' )
+    aggTotal = aggTotal.sort_values(value_colname, ascending = False )
+    aggTotal[value_colname] = aggTotal[value_colname]
+    return aggTotal[['VariableId', 'ItemText', 'SectionName', value_colname]]
+
+def tsc_total_table(data, key, exclude_interventions = False):
+        key['VariableId'] = key['VariableId'].str.replace(' ', '')
+        totalMeans = tsc_aggregate(data, key, 'mean', 'Percent', exclude_interventions=exclude_interventions) 
+        totalMeans['Percent'] = (totalMeans['Percent'] * 100).round(2)
+        totalMeans['Percent'] = (totalMeans['Percent'].astype('str') + '%')
+        totalSum = tsc_aggregate(data, key, agg_method='sum', value_colname='Count', exclude_interventions=exclude_interventions)
+        totalTable = totalSum[['SectionName','ItemText', 'Count']].merge(totalMeans[['ItemText', 'Percent']], on='ItemText')
+        totalTable['Count'] = totalTable['Count'].astype('float')
+        return totalTable
+
+def create_section_tables(total_table, sections):
+    #Breaks down the total table into individual sections
+    allSectionTables = {}
+    for section in sections:
+        sectionTable = total_table.loc[total_table['SectionName'] == section, ['ItemText', 'Count', 'Percent']]
+        allSectionTables[section] = sectionTable
+    return allSectionTables
+
+def display_totals(all_tables, charts = False, export = False, output_path = 'C:\\Users\\pwsan\\Dropbox\\BYU-JTF Big Data\\Analysis output\\TSC Paper' ):
+    
+    cols = st.beta_columns(2)
+    colCount = 0
+    for section,table in all_tables.items():
+        
+        cols[colCount].header(section)
+        if charts == False:
+            cols[colCount].write(table)
+            if export:
+                table.to_excel( f'{output_path}\\{section} frequency table.xlsx', index=False)
+
+        else:
+            chart = alt.Chart(table).mark_bar().encode(
+                x = 'Count:Q',
+                y = alt.Y('ItemText', title='Choice', sort='-x')
+            )
+            #text = chart.mark_text(dx=3).encode('Percent')
+            cols[colCount].altair_chart((chart))
+            #if export == True:
+            #    save(chart,f'{output_path}{section} frequency chart.png')
+        if colCount == 0:
+            colCount = 1
+        else: 
+            colCount = 0
+
+def export_totals(all_tables, output_path = 'C:\\Users\\pwsan\Dropbox\\BYU-JTF Big Data\\Analysis output\\TSC Paper\\Response Frequencies\\'):
+    for section, table in all_tables.items():
+        st.write(output_path)
+        st.write(section)
+        table.to_excel( f'{output_path}{section} frequency table.xlsx', index=False)
+        export_word(table, f'{section} frequencies', output_path)
 def filter_researcher(data, researcher, showAll, sections):
     if showAll:
         dataFiltered = data
@@ -93,13 +151,20 @@ def grouped_pivot_table(data, key_df, groupby, max_ranking =3, include_percents 
         researcherPivotNoPercent= researcherGroup.pivot(index=groupby, columns='Ranking', values='ItemText')
         return researcherPivotNoPercent
 
-def top_values(pivoted_data, tables):
+def top_values(pivoted_data, tables, export = False, export_path= None, grouper = None):
+    #last 3 arguments are just for export
     t1, t2, t3 = st.beta_columns((1,1,1))
     
     firstTable = vc_plus(pivoted_data, 1)[[1, 'Count', 'Percent']].rename({1:'Choice'}, axis = 1)
     secondTable = vc_plus(pivoted_data, 2)[[2, 'Count', 'Percent']].rename({2:'Choice'}, axis = 1)
     thirdTable = vc_plus(pivoted_data, 3)[[3, 'Count', 'Percent']].rename({3:'Choice'}, axis = 1)
 
+    if export:
+        tables = [firstTable, secondTable, thirdTable]
+        count = 1
+        for table in tables:
+            table.to_excel(f'{export_path}{grouper} rank {count} tables.xlsx')
+            count += 1
     #firstTable = pivoted_data.stb.freq([1])[[1, 'count', 'percent']].rename({1:'Choice'}, axis = 1)
     #secondTable = pivoted_data.stb.freq([2])[[2, 'count', 'percent']].rename({2:'Choice'}, axis=1)
     #thirdTable = pivoted_data.stb.freq([3])[[3, 'count', 'percent']].rename({3:'Choice'}, axis=1)
@@ -120,8 +185,7 @@ def top_values(pivoted_data, tables):
     t1.write('Ranked 1st')
     t2.write('Ranked 2nd')
     t3.write('Ranked 3rd')
-
-    
+   
     
 
     chart1, chart2, chart3 = st.beta_columns((1,1,1))
@@ -154,7 +218,7 @@ def site_characteristics(data):
     r2c1.write(vc_plus(data,'LanguageName'))
 
     r2t2.write('Responses by Location Type')
-    r2c2.write(vc_plus(data,'LocationType'))
+    r2c2.write(vc_plus(data,'LocationCategorized'))
 
     r2t3.write('Responses by Country')
     r2c3.write(vc_plus(data, 'CountryName'))
@@ -183,7 +247,7 @@ def client_characteristics(data):
     r2c1, r2c2, r2c3 = st.beta_columns(3)
     with r2c1:
         st.write('Religious Tradition')
-        st.write(vc_plus(data, 'ReligiousAffiliation'))
+        st.write(vc_plus(data, 'ReligionCategory'))
 
     with r2c2:
         st.write('Denomination')
@@ -214,6 +278,9 @@ def treatment_characteristics(data):
     with c1:
         st.write('Treatment Modality')
         st.write(vc_plus(data, 'Modality'))
+        st.write('SurveyMax')
+        data['SurveyMax'] = data.groupby('ClientName')['SurveyCount'].transform('max')
+        st.write(vc_plus(data, 'SurveyMax'))
     with c2:
         st.write('Responses by session number')
         st.write(vc_plus(data, 'SessionCount'))
@@ -248,6 +315,57 @@ def missing_data_characteristics(data):
     with r2c3:
         st.write('Number of Counseling Topics Selected')
         st.write(vc_plus(data, 'CounselingTopicsNotNa'))
+
+
+def export_word(data, file_name, file_path):
+    
+    #vcData = vc_plus(data,column)
+    #st.write(vcData)
+    doc = docx.Document('C:\\Users\\pwsan\\Dropbox\\BYU-JTF Big Data\\Analysis output\\TSC Paper\\Sample Information\\apa table template.docx')
+    
+    table = doc.add_table(data.shape[0]+1, data.shape[1], style='APA Table')
+    
+    #adding header rows
+    for column in range(data.shape[-1]):
+        table.cell(0, column).text = data.columns[column]
+    
+    for row in range(data.shape[0]):
+        for column in range(data.shape[-1]):
+            table.cell(row+1, column).text = str(data.values[row, column])
+
+    doc.save(f'{file_path}{file_name}.docx')
+    #st.write(vcData.shape[-1])
+
+def export_value_counts(data, columns, base_path, format = 'word', doc_template = 'C:\\Users\\pwsan\\Dropbox\\BYU-JTF Big Data\\Analysis output\\TSC Paper\\Sample Information\\apa table template.docx' ):
+    for column in columns:
+        st.write(column)
+        vcData = vc_plus(data, column = column, format_percent=True)
+        if format == 'excel':
+            vcData.to_excel(f'{base_path}{column} counts.xlsx', index = False)
+        if format == 'word':
+            export_word(vcData, f'{column} Counts', base_path)
+            
+
+     
+def export_sample_info(data, base_path, doc_var = None):
+    exportChoices = {
+    'Site Characteristics':['ResearcherName', 'LocationName', 'LanguageName', 'LocationCategorized', 'CountryName']
+    ,'Client Characteristics':['EthnicityCategorized', 'Gender', 'Age', 'ReligionCategory', 'DenominationCategorized',
+                                'IsReligionImportant', 'DiscussReligion', 'HasReligionHurt', 'TryReligiousSuggestions']
+    ,'Missing Data':['sumEmptySections', 'IntentionsNotNa', 'TheoreticalOrientationNotNa', 'SpiritualInterventionsNotNa', 'InterventionsNotNa','CounselingTopicsNotNa']}
+    
+    st.write('Export Tables')
+    exportSelection = st.sidebar.selectbox('Variables to export', options = ['Site Characteristics', 'Client Characteristics', 'Missing Data'])
+    exportFormat = st.sidebar.selectbox('Select format', options = ['word', 'excel'])
+    exportToggle = st.sidebar.button('Export')
+    exportColumns = exportChoices[exportSelection]
+
+    if exportToggle:
+   
+        export_value_counts(data, exportColumns, base_path, format = exportFormat )
+
+        
+
 
 def get_eigenvalues(item_data, items):
         fa= FactorAnalyzer(len(items), rotation=None)
@@ -289,6 +407,8 @@ def efa_model_tests(item_data):
         kmoAll, kmoModel = calculate_kmo(item_data)
         st.write(f'KMO Statistic: {kmoModel}')
 
+
+
 def rename_loadings(loading_data, key, item_data):
     #Creating maps for the renames
     keyNoSpace = key
@@ -301,6 +421,8 @@ def rename_loadings(loading_data, key, item_data):
     loadings = loadings.rename(positionColDict)
     loadings = loadings.rename(variableItemMap)
     return loadings
+
+
 
 def researcher_select(data, researcher_list):
     
@@ -317,6 +439,26 @@ def researcher_select(data, researcher_list):
     
     return dataFiltered
 
+def sort_all_loadings(loading_data, export = True, base_path = "C:\\Users\\pwsan\\Dropbox\\BYU-JTF Big Data\\Analysis output\\TSC Paper\\EFA Model\\" ):
+    
+    loading_data['highestFactor'] = loading_data.idxmax(axis = 1)
+    st.write('local')
+    st.write(loading_data)
+    loading_data = loading_data.sort_values(['highestFactor', 0, 1, 2], ascending = False)
+    maxLoadingTable = []
+    for i in range(0,(loading_data.shape[1] -1)):
+        max = loading_data.loc[loading_data.highestFactor == i, :].sort_values(i, ascending = False)
+        maxLoadingTable.append(max)
+    loadingsConcat = pd.concat(maxLoadingTable)
+    loadingsConcat = loadingsConcat.drop('highestFactor', axis = 1)
+    loadingsConcat.columns = [f'Factor {i}' for i in loadingsConcat.columns]
+    loadingsConcat = loadingsConcat.round(2)
+    if export == True:  
+        loadingsConcat.to_excel(f'{base_path}All loadings sorted.xlsx')
+        export_word(loadingsConcat.reset_index(), 'All loadings Spiritual 3 Factor', base_path )
+        st.write('Data Exported')
+    return loadingsConcat
+
 def separate_factor_output(loading_data, only_show_highest, min_loading):
 
     #create a column using id max that shows which factor each item loads into most highly
@@ -324,6 +466,7 @@ def separate_factor_output(loading_data, only_show_highest, min_loading):
     loading_data['HighestFactor'] = loading_data.idxmax(axis=1)
     #create a loop that goes through and Iterates on a range of 0 to max number of choices
     allTables = []
+
     for item in range(0,nItems):
         #Selects all choices that have idmax equal to current value of loop
         hiFactorTable = loading_data.loc[(loading_data.HighestFactor == item) & (loading_data[item] >= min_loading)]
@@ -347,7 +490,7 @@ def separate_factor_output(loading_data, only_show_highest, min_loading):
 
 def export_loadings(all_tables, export_filename):
     fullTable = pd.concat(all_tables).rename('Highest Loading')
-    fullTable.to_csv(f'C:\\Users\\pwsan\\Box Sync\\My Files\\Big Data\\Output Files\\{export_filename}.csv')
+    fullTable.to_excel(f'{export_filename}.xlsx')
 
 def score_factors(data, loading_tables, key):
     count = 0
@@ -398,7 +541,7 @@ def create_factor_charts(data, grouping_var, n_columns):
         #Write it to the column corresponding to the column counter number
         #If columns is less than n_columns increase it by one, if it is equal to it, then set back to one
 
-def fa_display(loading_tables, group_charts, n_factors, columns):
+def fa_display(loading_tables, group_charts, n_factors, columns, include_charts = False):
 
     #Set up the columns
     cols= st.beta_columns(columns)
@@ -414,16 +557,118 @@ def fa_display(loading_tables, group_charts, n_factors, columns):
         cols[column].write('Model Loadings')
         cols[column].write(loading_tables[item][noFactor])
 
-        #col2.write(f'Factor {item}')
-        cols[column].write('Grouped Values')
-        cols[column].write(group_charts[item])
-        #write c2 to be group_charts[item]
+        if include_charts:
+            #col2.write(f'Factor {item}')
+            cols[column].write('Grouped Values')
+            cols[column].write(group_charts[item])
+            #write c2 to be group_charts[item]
         if column < columns -1:
             column +=1
         else:
             column = 0
 
-   
+def correlate_factor_section(scored_data, factor_columns, section_items,key, ):
+    factorSectionCols = factor_columns + section_items
+    corrFactorSection = scored_data[factorSectionCols].corr()
+    itemVariableMap = key.set_index('VariableId')['ItemText'].to_dict()
+    corrFactorSection = corrFactorSection.rename(itemVariableMap)
+    noFactorIndex = [i for i in corrFactorSection.index if 'factor' not in i]
+    corrFactorSection = corrFactorSection.loc[noFactorIndex, factor_columns]
+    return corrFactorSection
+
+def factor_section_tables(scored_data, section_list, factor_section, key, export = False):
+    """This gets a list of correlations between the factors and sections and returns a list of these tables"""
+    #Get list of factors
+    factorCols = [i for i in scored_data.columns if 'Mean' in i]
+    #Remove the section that the factors were derived from
+    sectionList = [i for i in section_list if not i.startswith(factor_section)]
+    allTables = []
+    for section in sectionList:
+        sectionItems = [i.replace(' ', '') for i in scored_data.columns if i.startswith(section)]
+        corrMatrix = correlate_factor_section(scored_data, factor_columns=factorCols, section_items=sectionItems, key=key)
+        allTables.append(corrMatrix)
+        if export:
+            corrMatrix.to_excel(f'C:\\Users\\pwsan\\Box Sync\\My Files\\Big Data\\Output Files\\SI 3 factor tables\\Correlations between {factor_section} and {section}.xlsx')
+    
+        #st.write(section)
+        #st.write(correlate_factor_section(scored_data,factor_columns = factorCols, section_items=sectionItems,key=key ))
+    return allTables
+
+def create_column_sections(heading_list, data_list, n_columns = 2):
+    """Allows the creation of an arbitrary number of multiple column sections, heading_list and data_list must be the same size
+    Although these must be the same size, data_list can be a list of lists allowing for different structures
+    My original use case is the tables that will be iterated through on the columns, but this could be different
+    *heading_list(list of strings): List of headings for the sections
+    *data_list(list of any object or collection): List of data elements
+    *output: dict with section names and column object, for example I can have one with "TheoreticalOrientation" as the key, and then the
+    column object as the value.  Therefore I could set things in a position by saying TheoreticalOrientation[0] and it would go  in the first column of that section
+    """
+    sectionDict = {}
+    for item in range(0,len(heading_list)):
+        st.header(heading_list[item])
+        cols = st.beta_columns(2)
+        sectionDict[heading_list[item]] = cols
+    return sectionDict
+
+
+
+def display_fs_corr(scored_data, section_list, factor_section, key, n_columns = 2, export = False, export_type = None):
+    """Breaks the correlation matrices into specific columns showing ordered tables for each factor in each section"""
+    allTables = factor_section_tables(scored_data, section_list, factor_section, key, export=export)
+    sectionList = [i for i in section_list if not i.startswith(factor_section)]
+    sectionDict = create_column_sections(heading_list = sectionList, data_list=allTables, n_columns=n_columns)
+    st.write(allTables)
+    if export:
+        for i in range(len(allTables)):
+            
+            allTables[i] = allTables[i].round(2)
+            export_word(allTables[i], f'{sectionList[i]} factor correlations', 'C:\\Users\\pwsan\\Dropbox\\BYU-JTF Big Data\\Analysis output\\TSC Paper\\EFA Model' )
+
+            allTables[i].to_excel(f'C:\\Users\\pwsan\\Dropbox\\BYU-JTF Big Data\\Analysis output\\TSC Paper\\EFA Model\\{sectionList[i]} correlations.xlsx')
+            st.write('Correlations Exported')
+    #This loop takes the positional for the section that is the same across the section title, the columns associated with it, and the table of correlations and uses it throughout
+    for position in range(0,len(sectionList)):
+        currentSection = sectionList[position]
+        currentCols = sectionDict[sectionList[position]]
+        currentTable = allTables[position]
+        columnNumber = 0
+        #This loop takes the current table (has all factors as columns) and takes the individual column and writes it to the correct column
+        for series in currentTable.columns:
+            currentCols[columnNumber].write(currentTable[series].sort_values(ascending=False))
+            #Getting it so that the column number adjusts appropriately, n_columns -1 adjusts for 0 indexing
+            if columnNumber < (n_columns - 1):
+                columnNumber += 1
+            else:
+                columnNumber = 0
+            
+
+def therapist_high_factor(scored_data):
+    #Getting percent of therapists with each factor score as their highest
+    
+    factorItems = [i for i in scored_data.columns if 'Mean' in i]
+    therapistMeans = scored_data.groupby('TherapistJoined')[factorItems].mean()
+    st.write(therapistMeans)
+    therapistMeans['MaxFactor'] = therapistMeans.idxmax(axis =1)
+    st.write(therapistMeans['MaxFactor'])
+    therapistCounts = vc_plus(therapistMeans, 'MaxFactor')
+    st.write(therapistCounts)
+    return therapistCounts
+
+
+
+        
+    #for heading,columns in sectionDict.items():
+     #   st.write(heading)
+      #  for 
+    #This is going to take the section number, which should line up with the table number/index in alltables and create the sections
+  
+    
+
+
+
+
+
+
 
     
 
